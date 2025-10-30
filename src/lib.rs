@@ -251,67 +251,54 @@ pub fn tomula_execute_derive(input: TokenStream) -> TokenStream {
     let expanded = quote! {
         use ::mlua::Lua;
         impl #name {
-            fn extract_lua_code(script: &Script) -> Result<String, String> {
+            fn extract_lua_code(script: &Script) -> Result<String, ::tomlua::error::Error> {
                 match &script.inline() {
                     Some(code) => return Ok(code.to_string()),
                     None => {},
                 }
                 match &script.path() {
                     Some(p) => {
-                        return std::fs::read_to_string(p)
-                                .map_err(|e| format!("Failed to read script `{}`:\n{}", script.name(), e.to_string()))
+                        return Ok(std::fs::read_to_string(p)?)
                     },
                     None => {},
                 }
-                Err(format!("No code found for '{}'\nexpected at least one of: 'inline', 'path'", script.name()))
+                Err(::tomlua::error::Error::EmptyScript(script.name().to_string()))
             }
 
-            pub fn execute_script(&self, script_name: &str) -> Result<Lua, String> {
+            pub fn execute_script(&self, script_name: &str) -> Result<Lua, ::tomlua::error::Error> {
                 let lua = Lua::new();
                 let globals = lua.globals();
                 #(globals.set(
                     stringify!(#fields),
-                    self.#fields.clone())
-                        .map_err(|e| format!("Failed to inject fields as Lua variables\n{}", e.to_string())
+                    self.#fields.clone()
                 )?;)*
 
                 if let Some(script) = self.scripts.iter().find(|s| s.name() == script_name) {
                     let lua_script_str = #name::extract_lua_code(&script)?;
-                    lua.load(lua_script_str).exec()
-                        .map_err(|e| format!("Scrip `{}` failed: {}", script.name(), e.to_string()))?;
+                    lua.load(lua_script_str).exec()?;
                 }
                 Ok(lua)
             }
 
-            pub fn execute_all(&self) -> Result<Lua, String> {
+            pub fn execute_all(&self) -> Result<Lua, ::tomlua::error::Error> {
                 let lua = Lua::new();
                 let globals = lua.globals();
                 #(globals.set(
                     stringify!(#fields),
-                    self.#fields.clone())
-                        .map_err(|e| format!("Failed to inject fields as Lua variables\n{}", e.to_string())
+                    self.#fields.clone()
                 )?;)*
 
                 for script in &self.scripts {
                     let lua_script_str = #name::extract_lua_code(&script)?;
-                    lua.load(lua_script_str).exec()
-                        .map_err(|e| format!("Scrip `{}` failed: {}", script.name(), e.to_string()))?;
+                    lua.load(lua_script_str).exec()?;
                 }
                 Ok(lua)
             }
 
-            pub fn update(&mut self, lua: Lua) -> Result<(), String> {
+            pub fn update(&mut self, lua: Lua) -> Result<(), ::tomlua::error::Error> {
                 let globals = lua.globals();
 
-                #(
-                    self.#fields = globals
-                        .get::<_>(stringify!(#fields))
-                        .map_err(|e| format!(
-                            "Failed to read global `{}` from Lua: {}",
-                            stringify!(#fields),
-                            e
-                        ))?;
-                )*
+                #(self.#fields = globals.get::<_>(stringify!(#fields))?;)*
 
                 Ok(())
             }
