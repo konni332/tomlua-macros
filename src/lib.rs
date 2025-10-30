@@ -253,14 +253,14 @@ pub fn tomula_execute_derive(input: TokenStream) -> TokenStream {
         impl #name {
             fn extract_lua_code(script: &Script) -> Result<String, ::tomlua::error::Error> {
                 match &script.inline() {
-                    Some(code) => return Ok(code.to_string()),
-                    None => {},
+                    Some(code) if !code.is_empty() => return Ok(code.to_string()),
+                    _ => {},
                 }
                 match &script.path() {
                     Some(p) => {
                         return Ok(std::fs::read_to_string(p)?)
                     },
-                    None => {},
+                    _ => {},
                 }
                 Err(::tomlua::error::Error::EmptyScript(script.name().to_string()))
             }
@@ -274,8 +274,13 @@ pub fn tomula_execute_derive(input: TokenStream) -> TokenStream {
                 )?;)*
 
                 if let Some(script) = self.scripts.iter().find(|s| s.name() == script_name) {
+                    script.validate()?;
                     let lua_script_str = #name::extract_lua_code(&script)?;
-                    lua.load(lua_script_str).exec()?;
+                    lua.load(lua_script_str).exec()
+                        .map_err(|error| {
+                            let error = ::tomlua::error::lua_error_message(&error);
+                            ::tomlua::error::Error::LuaRunTimeError { error, script: script.name().to_string() }
+                        })?;
                 }
                 Ok(lua)
             }
@@ -289,13 +294,18 @@ pub fn tomula_execute_derive(input: TokenStream) -> TokenStream {
                 )?;)*
 
                 for script in &self.scripts {
+                    script.validate()?;
                     let lua_script_str = #name::extract_lua_code(&script)?;
-                    lua.load(lua_script_str).exec()?;
+                    lua.load(lua_script_str).exec()
+                        .map_err(|error| {
+                            let error = ::tomlua::error::lua_error_message(&error);
+                            ::tomlua::error::Error::LuaRunTimeError { error, script: script.name().to_string() }
+                        })?;
                 }
                 Ok(lua)
             }
 
-            pub fn update(&mut self, lua: Lua) -> Result<(), ::tomlua::error::Error> {
+            pub fn update(&mut self, lua: &Lua) -> Result<(), ::tomlua::error::Error> {
                 let globals = lua.globals();
 
                 #(self.#fields = globals.get::<_>(stringify!(#fields))?;)*
