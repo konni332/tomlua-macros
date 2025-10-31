@@ -250,6 +250,7 @@ pub fn tomula_execute_derive(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         use ::mlua::Lua;
+        use ::mlua::Value;
         impl #name {
             fn extract_lua_code(script: &Script) -> Result<String, ::tomlua::error::Error> {
                 match &script.inline() {
@@ -265,7 +266,7 @@ pub fn tomula_execute_derive(input: TokenStream) -> TokenStream {
                 Err(::tomlua::error::Error::EmptyScript(script.name().to_string()))
             }
 
-            pub fn execute_script(&self, script_name: &str) -> Result<Lua, ::tomlua::error::Error> {
+            pub fn execute_script(&mut self, script_name: &str, update_if: Option<&str>) -> Result<Lua, ::tomlua::error::Error> {
                 let lua = Lua::new();
                 let globals = lua.globals();
                 #(globals.set(
@@ -282,10 +283,21 @@ pub fn tomula_execute_derive(input: TokenStream) -> TokenStream {
                             ::tomlua::error::Error::LuaRunTimeError { error, script: script.name().to_string() }
                         })?;
                 }
+
+                if let Some(var_name) = update_if {
+                    let val: Value = globals.raw_get(var_name)?;
+                    match val {
+                        Value::Nil | Value::Boolean(false) => {},
+                        _ => {
+                            self.update(&lua)?;
+                        }
+                    }
+                }
+
                 Ok(lua)
             }
 
-            pub fn execute_all(&self) -> Result<Lua, ::tomlua::error::Error> {
+            pub fn execute_all(&mut self, update_if: Option<&str>) -> Result<Lua, ::tomlua::error::Error> {
                 let lua = Lua::new();
                 let globals = lua.globals();
                 #(globals.set(
@@ -301,6 +313,16 @@ pub fn tomula_execute_derive(input: TokenStream) -> TokenStream {
                             let error = ::tomlua::error::lua_error_message(&error);
                             ::tomlua::error::Error::LuaRunTimeError { error, script: script.name().to_string() }
                         })?;
+                }
+
+                if let Some(var_name) = update_if {
+                    let val: Value = globals.raw_get(var_name)?;
+                    match val {
+                        Value::Nil | Value::Boolean(false) => {},
+                        _ => {
+                            self.update(&lua)?;
+                        }
+                    }
                 }
                 Ok(lua)
             }
