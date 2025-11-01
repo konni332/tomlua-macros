@@ -125,7 +125,10 @@ pub fn tomlua_config(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     fields.push(
         syn::Field::parse_named
-            .parse2(quote! { pub scripts: ::std::vec::Vec<::tomlua::Script> })
+            .parse2(quote! {
+                #[lua_global]
+                pub scripts: ::std::vec::Vec<::tomlua::Script>
+            })
             .unwrap(),
     );
 
@@ -233,14 +236,23 @@ pub fn tomlua_config(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// - [`#[tomlua_config]`](crate::tomlua_config) – attribute macro that automatically derives `TomluaExecute`
 ///   and adds a `scripts` field.
 /// - [`Script`](crate::Script) – represents a single executable Lua script.
-#[proc_macro_derive(TomluaExecute)]
+#[proc_macro_derive(TomluaExecute, attributes(lua_global))]
 pub fn tomula_execute_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
 
-    let fields = if let syn::Data::Struct(ref data) = input.data {
+    let lua_fields = if let syn::Data::Struct(ref data) = input.data {
         if let syn::Fields::Named(ref named) = data.fields {
-            named.named.iter().map(|f| &f.ident).collect::<Vec<_>>()
+            named
+                .named
+                .iter()
+                .filter(|f| {
+                    f.attrs
+                        .iter()
+                        .any(|attr| attr.path().is_ident("lua_global"))
+                })
+                .map(|f| f.ident.as_ref().unwrap())
+                .collect()
         } else {
             vec![]
         }
@@ -270,8 +282,8 @@ pub fn tomula_execute_derive(input: TokenStream) -> TokenStream {
                 let lua = Lua::new();
                 let globals = lua.globals();
                 #(globals.set(
-                    stringify!(#fields),
-                    self.#fields.clone()
+                    stringify!(#lua_fields),
+                    self.#lua_fields.clone()
                 )?;)*
 
                 if let Some(script) = self.scripts.iter().find(|s| s.name() == script_name) {
@@ -301,8 +313,8 @@ pub fn tomula_execute_derive(input: TokenStream) -> TokenStream {
                 let lua = Lua::new();
                 let globals = lua.globals();
                 #(globals.set(
-                    stringify!(#fields),
-                    self.#fields.clone()
+                    stringify!(#lua_fields),
+                    self.#lua_fields.clone()
                 )?;)*
 
                 for script in &self.scripts {
@@ -330,7 +342,7 @@ pub fn tomula_execute_derive(input: TokenStream) -> TokenStream {
             pub fn update(&mut self, lua: &Lua) -> Result<(), ::tomlua::error::Error> {
                 let globals = lua.globals();
 
-                #(self.#fields = globals.get::<_>(stringify!(#fields))?;)*
+                #(self.#lua_fields = globals.get::<_>(stringify!(#lua_fields))?;)*
 
                 Ok(())
             }
