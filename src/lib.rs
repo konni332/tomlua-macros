@@ -33,6 +33,7 @@ use syn::{
 /// #[derive(Serialize, Deserialize)]
 /// struct MyConfig {
 ///     name: String,
+///     #[lua_global]
 ///     toggle: bool,
 /// }
 ///
@@ -55,12 +56,14 @@ use syn::{
 /// When applied, this macro **always adds** the following field to your struct:
 ///
 /// ```rust,ignore
+/// #[lua_global]
 /// pub scripts: Vec<tomlua::Script>
 /// ```
 ///
 /// This field holds all scripts defined in your configuration, which may be either
 /// inline or path-based. Each script is executed in a Lua VM with your struct’s fields
-/// available as global variables.
+/// available as global variables if they are marked using the optional `#[lua_global]` helper
+/// attribute.
 ///
 /// # Limitations
 ///
@@ -68,6 +71,9 @@ use syn::{
 /// - Existing `#[derive(...)]` attributes are extended automatically with
 ///   `TomluaExecute`. If no derive is present, one is added.
 /// - The macro will emit a compile-time error if applied to unsupported data types.
+/// - Fields marked using `[lua_global]` must implement the `LuaUserData` and `FromLua` traits,
+/// provided by the [mlua](https://crates.io/crates/mlua) crate. The implementations for the
+/// `Script` type are provided by the [`tomlua`](https://crates.io/crates/tomlua) crate.
 ///
 /// # See Also
 ///
@@ -80,6 +86,8 @@ use syn::{
 /// Compilation fails if:
 /// - The macro is applied to a non-struct item.
 /// - The struct has unnamed fields (tuple structs are unsupported).
+/// - The `#[lua_global]` is applied to types that don't implement `LuaUserData` and `FromLua`
+/// traits
 ///
 /// # Generated Implementation
 ///
@@ -98,6 +106,8 @@ pub fn tomlua_config(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
     let struct_name: &Ident = &input.ident;
     let vis: &Visibility = &input.vis;
+    let generics = input.generics.clone();
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let data = match &input.data {
         Data::Struct(s) => s,
@@ -160,7 +170,9 @@ pub fn tomlua_config(_attr: TokenStream, item: TokenStream) -> TokenStream {
         use ::tomlua::Script;
 
         #(#new_attrs)*
-        #vis struct #struct_name {
+        #vis struct #struct_name #generics
+        #where_clause
+        {
             #fields
         }
     };
@@ -183,21 +195,26 @@ pub fn tomlua_config(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// The macro expands into several helper methods that provide a complete Lua execution pipeline:
 ///
-/// - `fn extract_lua_code(script: &Script) -> Result<String, String>`  
+/// - `fn extract_lua_code(script: &Script) -> Result<String, Error>`  
 ///   Resolves the Lua code to execute. Prefers `inline` script definitions over `path`-based ones.
 ///   Returns an error if neither is found.
 ///
-/// - `pub fn execute_script(&self, script_name: &str) -> Result<Lua, String>`  
+/// - `pub fn execute_script(&self, script_name: &str) -> Result<Lua, Error>`  
 ///   Executes a single Lua script by its name. Injects all struct fields into the Lua global scope.
 ///   Returns the `mlua::Lua` runtime for further inspection or state extraction.
 ///
-/// - `pub fn execute_all(&self) -> Result<Lua, String>`  
+/// - `pub fn execute_all(&self) -> Result<Lua, Error>`  
 ///   Executes **all** scripts in the order they appear in the configuration.  
 ///   Useful for chained or dependent script execution.
 ///
-/// - `pub fn update(&mut self, lua: Lua) -> Result<(), String>`  
+/// - `pub fn update(&mut self, lua: Lua) -> Result<(), Error>`  
 ///   Updates the struct fields by reading back their values from the Lua runtime’s global scope.
 ///   This enables two-way data flow between Rust and Lua.
+///
+/// # Helper attribute `#[lua_global]`
+/// The `#[lua_global]` attribute signals to the derive macro, to inject this field as a global
+/// variable into the Lua VM. This requires implementations of the `FromLua` and `LuaUserData`
+/// traits.
 ///
 /// # Example
 ///
